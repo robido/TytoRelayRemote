@@ -83,7 +83,7 @@ static uint8_t CURRENTPORT=0;
 		AT_READY,
 		CALL_IN_PROGRESS,
 		CONNECTED,
-	  } bt_state;
+	  } bt_state = UNKNOWN;
 #endif
 
 #define INBUF_SIZE 512
@@ -121,16 +121,27 @@ void send_string(const char * sr, uint8_t port) {
 
 #ifdef BLUETOOTH_WT41
 void send_BT_string(void){
+	static int call_counter = 0;
+	static int AT_counter = 0;
+	if(bt_state != UNKNOWN) AT_counter = 0;
 	switch(bt_state){
-	case UNKNOWN:
-		send_string("AT\n",BT_SERIAL_PORT);
-		break;
-	case AT_READY:
-		send_string("CALL ");
-		send_string(BT_REMOTE_ADDRESS);
-		send_string(" 1101 RFCOMM\n");
-		bt_state = CALL_IN_PROGRESS;
-		break;
+		case UNKNOWN:
+			if(AT_counter<3){ //No response after 3 calls either means link already on (passtrough mode) or no module connected at all.
+				send_string("AT\n",BT_SERIAL_PORT);
+				AT_counter++;
+			}
+			break;
+		case AT_READY:
+			send_string("CALL ",BT_SERIAL_PORT);
+			send_string(BT_REMOTE_ADDRESS,BT_SERIAL_PORT);
+			send_string(" 1101 RFCOMM\n",BT_SERIAL_PORT);
+			bt_state = CALL_IN_PROGRESS;
+			call_counter = 0;
+			break;
+		case CALL_IN_PROGRESS:
+			call_counter ++;
+			if(++call_counter>50) bt_state = UNKNOWN; //Timout after 5 seconds
+			break;
 	}
 	UartSendData(BT_SERIAL_PORT);
 	delay(100);
@@ -229,13 +240,14 @@ void serialCom() {
     uint8_t cc = SerialAvailable(CURRENTPORT);
 
 	#ifdef BLUETOOTH_WT41
-		if(bt_state < AUTH_SET && cc==0){
+		if(bt_state < CONNECTED && cc==0){
 			send_BT_string();
 		}
 	#endif
 
     while (cc-- GPS_COND RX_COND) {
       c = SerialRead(CURRENTPORT);
+
       #ifdef SUPPRESS_ALL_SERIAL_MSP
         // no MSP handling, so go directly
         evaluateOtherData(c);
@@ -243,7 +255,6 @@ void serialCom() {
         // regular data handling to detect and handle MSP and other data
         if (c_state[CURRENTPORT] == IDLE) {
           c_state[CURRENTPORT] = (c=='$') ? HEADER_START : IDLE;
-          evaluateOtherData(c); // evaluate all other incoming serial data
         } else if (c_state[CURRENTPORT] == HEADER_START) {
           c_state[CURRENTPORT] = (c=='R') ? HEADER_M : IDLE;
         } else if (c_state[CURRENTPORT] == HEADER_M) {
@@ -273,6 +284,9 @@ void serialCom() {
           c_state[CURRENTPORT] = IDLE;
           cc = 0; // no more than one MSP per port and per cycle
         }
+
+		if(c_state[CURRENTPORT]<=HEADER_START) evaluateOtherData(c); // evaluate all other incoming serial data
+
       #endif // SUPPRESS_ALL_SERIAL_MSP
     }
   }
@@ -669,6 +683,19 @@ void evaluateCommand() {
 void evaluateOtherData(uint8_t sr) {
   #ifndef SUPPRESS_OTHER_SERIAL_COMMANDS
 	#ifdef BLUETOOTH_WT41
+
+		//Relay the data
+		switch(CURRENTPORT){
+		case 0:
+			SerialSerialize(2,sr);
+			UartSendData(2);
+			break;
+		case 2:
+			SerialSerialize(0,sr);
+			UartSendData(0);
+			break;
+		}
+
 		//Handle bluetooth module commands
 		if(CURRENTPORT == BT_SERIAL_PORT){
 			//Save received data to buffer
@@ -685,8 +712,16 @@ void evaluateOtherData(uint8_t sr) {
 					case UNKNOWN:
 						if(strcmp("OK",(const char *) BT_BUFF)){
 							bt_state = AT_READY;
-						}else{
-							//send_BT_string();
+						}
+						break;
+					case CALL_IN_PROGRESS:
+						if(strcmp("CONNECT ",(const char *) BT_BUFF) && strcmp("RFCOMM",(const char *) BT_BUFF)){ //Leave the space after connect because the bluetooth may respond: CONNECTION_FAILED
+							bt_state = CONNECTED;
+						}
+						break;
+					default:
+						if(strcmp("SYNTAX ERROR",(const char *) BT_BUFF)){
+							bt_state = UNKNOWN;
 						}
 						break;
 				}
@@ -695,16 +730,6 @@ void evaluateOtherData(uint8_t sr) {
 			//Clear the string
 			BT_BUFF_index = 0;
 		}
-
-		//RELAY FUNCTION (All data received not intented for this relay board is echoed to other ports)
-		//switch (CURRENTPORT){
-		//	case BT_SERIAL_PORT:
-				SerialSerialize(0,sr);
-		//		break;
-		//	case 0:
-				SerialSerialize(BT_SERIAL_PORT,sr);
-		//		break;
-		//}
 	#endif
 
     switch (sr) {
