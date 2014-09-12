@@ -77,11 +77,24 @@
 
 static uint8_t CURRENTPORT=0;
 
-#define INBUF_SIZE 64
+#ifdef BLUETOOTH_WT41
+	static enum _bluetooth_state {
+		UNKNOWN,
+		AT_READY,
+		CALL_IN_PROGRESS,
+		CONNECTED,
+	  } bt_state;
+#endif
+
+#define INBUF_SIZE 512
 static uint8_t inBuf[INBUF_SIZE][UART_NUMBER];
 static uint8_t checksum[UART_NUMBER];
 static uint8_t indRX[UART_NUMBER];
 static uint8_t cmdMSP[UART_NUMBER];
+#ifdef BLUETOOTH_WT41
+	static uint8_t BT_BUFF[INBUF_SIZE];
+	static uint16_t BT_BUFF_index = 0;
+#endif
 
 void evaluateOtherData(uint8_t sr);
 #ifndef SUPPRESS_ALL_SERIAL_MSP
@@ -95,6 +108,34 @@ void evaluateCommand();
 // Capability is bit flags; next defines should be 2, 4, 8...
 
 const uint32_t capability = 0+BIND_CAPABLE;
+
+void send_string(const char * sr, uint8_t port) {
+	//send the string
+	int index = 0;
+	char c = sr[index++];
+	while(c!=0){
+		SerialSerialize(port,(uint8_t)c);
+		c = sr[index++];
+	}
+}
+
+#ifdef BLUETOOTH_WT41
+void send_BT_string(void){
+	switch(bt_state){
+	case UNKNOWN:
+		send_string("AT\n",BT_SERIAL_PORT);
+		break;
+	case AT_READY:
+		send_string("CALL ");
+		send_string(BT_REMOTE_ADDRESS);
+		send_string(" 1101 RFCOMM\n");
+		bt_state = CALL_IN_PROGRESS;
+		break;
+	}
+	UartSendData(BT_SERIAL_PORT);
+	delay(100);
+}
+#endif
 
 uint8_t read8()  {
   return inBuf[indRX[CURRENTPORT]++][CURRENTPORT]&0xff;
@@ -127,7 +168,7 @@ void serialize32(uint32_t a) {
 
 void headSerialResponse(uint8_t err, uint8_t s) {
   serialize8('$');
-  serialize8('M');
+  serialize8('R');
   serialize8(err ? '!' : '>');
   checksum[CURRENTPORT] = 0; // start calculating a new checksum
   serialize8(s);
@@ -170,6 +211,8 @@ void serialCom() {
     #if !defined(PROMINI)
       CURRENTPORT=n;
     #endif
+	uint8_t bytesTXBuff = SerialUsedTXBuff(CURRENTPORT); // indicates the number of occupied bytes in TX buffer
+    if (bytesTXBuff > TX_BUFFER_SIZE/2 ) continue; // ensure there is enough free TX buffer to go further
     #define GPS_COND
     #if defined(GPS_SERIAL)
       #if defined(GPS_PROMINI)
@@ -184,9 +227,14 @@ void serialCom() {
       #define RX_COND && (RX_SERIAL_PORT != CURRENTPORT)
     #endif
     uint8_t cc = SerialAvailable(CURRENTPORT);
+
+	#ifdef BLUETOOTH_WT41
+		if(bt_state < AUTH_SET && cc==0){
+			send_BT_string();
+		}
+	#endif
+
     while (cc-- GPS_COND RX_COND) {
-      uint8_t bytesTXBuff = SerialUsedTXBuff(CURRENTPORT); // indicates the number of occupied bytes in TX buffer
-      if (bytesTXBuff > TX_BUFFER_SIZE - 50 ) return; // ensure there is enough free TX buffer to go further (50 bytes margin)
       c = SerialRead(CURRENTPORT);
       #ifdef SUPPRESS_ALL_SERIAL_MSP
         // no MSP handling, so go directly
@@ -195,9 +243,9 @@ void serialCom() {
         // regular data handling to detect and handle MSP and other data
         if (c_state[CURRENTPORT] == IDLE) {
           c_state[CURRENTPORT] = (c=='$') ? HEADER_START : IDLE;
-          if (c_state[CURRENTPORT] == IDLE) evaluateOtherData(c); // evaluate all other incoming serial data
+          evaluateOtherData(c); // evaluate all other incoming serial data
         } else if (c_state[CURRENTPORT] == HEADER_START) {
-          c_state[CURRENTPORT] = (c=='M') ? HEADER_M : IDLE;
+          c_state[CURRENTPORT] = (c=='R') ? HEADER_M : IDLE;
         } else if (c_state[CURRENTPORT] == HEADER_M) {
           c_state[CURRENTPORT] = (c=='<') ? HEADER_ARROW : IDLE;
         } else if (c_state[CURRENTPORT] == HEADER_ARROW) {
@@ -620,6 +668,45 @@ void evaluateCommand() {
 // evaluate all other incoming serial data
 void evaluateOtherData(uint8_t sr) {
   #ifndef SUPPRESS_OTHER_SERIAL_COMMANDS
+	#ifdef BLUETOOTH_WT41
+		//Handle bluetooth module commands
+		if(CURRENTPORT == BT_SERIAL_PORT){
+			//Save received data to buffer
+			if(BT_BUFF_index < INBUF_SIZE-2){
+				BT_BUFF[BT_BUFF_index++] = sr;
+			}
+
+			//Analyse the data when a newline is received
+			if(sr == '\n'){
+				//Add an end caracter
+				BT_BUFF[BT_BUFF_index] = 0;
+
+				switch (bt_state){
+					case UNKNOWN:
+						if(strcmp("OK",(const char *) BT_BUFF)){
+							bt_state = AT_READY;
+						}else{
+							//send_BT_string();
+						}
+						break;
+				}
+			}
+
+			//Clear the string
+			BT_BUFF_index = 0;
+		}
+
+		//RELAY FUNCTION (All data received not intented for this relay board is echoed to other ports)
+		//switch (CURRENTPORT){
+		//	case BT_SERIAL_PORT:
+				SerialSerialize(0,sr);
+		//		break;
+		//	case 0:
+				SerialSerialize(BT_SERIAL_PORT,sr);
+		//		break;
+		//}
+	#endif
+
     switch (sr) {
     // Note: we may receive weird characters here which could trigger unwanted features during flight.
     //       this could lead to a crash easily.

@@ -358,6 +358,13 @@
   /********                       special receiver types             ********************/
   /**************************************************************************************/
 
+	//BLUETOOTH MODULE
+	#define BLUETOOTH_WT41 //Special code to handle WT41 to connect to a slave bluetooth
+	#ifdef BLUETOOTH_WT41
+		#define BT_REMOTE_ADDRESS "00:07:80:7d:52:1b" //Obtained using a serial terminal connected directly to the module. Using iWrap 5.0 User Guide.
+		#define BT_SERIAL_PORT 2 //What serial port it is connected to
+	#endif
+
     /****************************    PPM Sum Reciver    ***********************************/
       /* The following lines apply only for specific receiver with only one PPM sum signal, on digital PIN 2
          Select the right line depending on your radio brand. Feel free to modify the order in your PPM order is different */
