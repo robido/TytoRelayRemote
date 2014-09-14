@@ -77,15 +77,6 @@
 
 static uint8_t CURRENTPORT=0;
 
-#ifdef BLUETOOTH_WT41
-	static enum _bluetooth_state {
-		UNKNOWN,
-		AT_READY,
-		CALL_IN_PROGRESS,
-		CONNECTED,
-	  } bt_state = UNKNOWN;
-#endif
-
 #define INBUF_SIZE 512
 static uint8_t inBuf[INBUF_SIZE][UART_NUMBER];
 static uint8_t checksum[UART_NUMBER];
@@ -109,6 +100,18 @@ void evaluateCommand();
 
 const uint32_t capability = 0+BIND_CAPABLE;
 
+#ifdef BLUETOOTH_WT41
+static int32_t relay_time_left = 0;
+void relay_off(uint8_t seconds){
+	RELAY_ON = 0; 
+	relay_time_left = (uint32_t)seconds * 1000000L; //In microseconds
+}
+void relay_on(void){
+	RELAY_ON = 1;
+	relay_time_left = 0;
+}
+#endif
+
 void send_string(const char * sr, uint8_t port) {
 	//send the string
 	int index = 0;
@@ -119,34 +122,116 @@ void send_string(const char * sr, uint8_t port) {
 	}
 }
 
-#ifdef BLUETOOTH_WT41
-void send_BT_string(void){
-	static int call_counter = 0;
-	static int AT_counter = 0;
-	if(bt_state != UNKNOWN) AT_counter = 0;
-	switch(bt_state){
-		case UNKNOWN:
-			if(AT_counter<3){ //No response after 3 calls either means link already on (passtrough mode) or no module connected at all.
-				send_string("AT\n",BT_SERIAL_PORT);
-				AT_counter++;
+// evaluate all other incoming serial data
+void evaluateOtherData(uint8_t sr) {
+  #ifndef SUPPRESS_OTHER_SERIAL_COMMANDS
+	#ifdef BLUETOOTH_WT41
+		//Handle data
+		if(CURRENTPORT == BT_SERIAL_PORT){
+			//Save received data to buffer
+			if(BT_BUFF_index < INBUF_SIZE-2){
+				BT_BUFF[BT_BUFF_index++] = sr;
 			}
-			break;
-		case AT_READY:
-			send_string("CALL ",BT_SERIAL_PORT);
-			send_string(BT_REMOTE_ADDRESS,BT_SERIAL_PORT);
-			send_string(" 1101 RFCOMM\n",BT_SERIAL_PORT);
-			bt_state = CALL_IN_PROGRESS;
-			call_counter = 0;
-			break;
-		case CALL_IN_PROGRESS:
-			call_counter ++;
-			if(++call_counter>50) bt_state = UNKNOWN; //Timout after 5 seconds
-			break;
-	}
-	UartSendData(BT_SERIAL_PORT);
-	delay(100);
+
+			//Analyse the data when a newline is received for bluetooth protocol
+			if(sr == '\n'){
+				//Add an end caracter
+				BT_BUFF[BT_BUFF_index] = 0;
+
+				//Check content of last line
+				if(strstr((const char *) BT_BUFF,"OK") || strstr((const char *) BT_BUFF,"READY") || strstr((const char *) BT_BUFF,"ERROR")){
+					//Reconnect bluetooth
+					relay_off(10); //Turn off relay with a timout.
+					send_string("\r\nCALL ",BT_SERIAL_PORT);
+					send_string(BT_REMOTE_ADDRESS,BT_SERIAL_PORT);
+					send_string(" 1101 RFCOMM\r\n",BT_SERIAL_PORT);
+					UartSendData(BT_SERIAL_PORT);
+				}
+
+				if(strstr((const char *) BT_BUFF,"CONNECT ") && strstr((const char *) BT_BUFF,"RFCOMM")){
+					//Reconnected, so relay can be reactivated immediatly
+					relay_on();
+				}
+
+				//Clear the buffer
+				BT_BUFF_index = 0;
+			}
+
+			//Analyse the data when a < is received (bluetooth module echoes the sent data meaning no connection)
+			if(sr == '<'){
+				//Add an end caracter
+				BT_BUFF[BT_BUFF_index] = 0;
+
+				if(strstr((const char *) BT_BUFF,"$M<")){
+					//Send AT command, which will trigger other commands after
+					relay_off(1);
+					send_string("\r\nAT\r\n",BT_SERIAL_PORT);
+					UartSendData(BT_SERIAL_PORT);
+				}
+
+				//Clear the buffer
+				BT_BUFF_index = 0;
+			}
+		}
+	#endif
+
+    switch (sr) {
+    // Note: we may receive weird characters here which could trigger unwanted features during flight.
+    //       this could lead to a crash easily.
+    //       Please use if (!f.ARMED) where neccessary
+      #ifdef LCD_CONF
+        case 's':
+        case 'S':
+          if (!f.ARMED) configurationLoop();
+          break;
+      #endif
+      #ifdef LOG_PERMANENT_SHOW_AT_L
+        case 'L':
+          if (!f.ARMED) dumpPLog(1);
+          break;
+        #endif
+        #if defined(LCD_TELEMETRY) && defined(LCD_TEXTSTAR)
+        case 'A': // button A press
+          toggle_telemetry(1);
+          break;
+        case 'B': // button B press
+          toggle_telemetry(2);
+          break;
+        case 'C': // button C press
+          toggle_telemetry(3);
+          break;
+        case 'D': // button D press
+          toggle_telemetry(4);
+          break;
+        case 'a': // button A release
+        case 'b': // button B release
+        case 'c': // button C release
+        case 'd': // button D release
+          break;
+      #endif
+      #ifdef LCD_TELEMETRY
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+      #ifndef SUPPRESS_TELEMETRY_PAGE_R
+        case 'R':
+      #endif
+      #if defined(DEBUG) || defined(DEBUG_FREE)
+        case 'F':
+      #endif
+          toggle_telemetry(sr);
+          break;
+      #endif // LCD_TELEMETRY
+    }
+  #endif // SUPPRESS_OTHER_SERIAL_COMMANDS
 }
-#endif
 
 uint8_t read8()  {
   return inBuf[indRX[CURRENTPORT]++][CURRENTPORT]&0xff;
@@ -218,12 +303,25 @@ void serialCom() {
     HEADER_CMD,
   } c_state[UART_NUMBER];// = IDLE;
 
+  #ifdef BLUETOOTH_WT41
+	  //Turn back on the relay after timeout period
+	  if(relay_time_left>0){
+		relay_time_left -= cycleTime;
+		if(relay_time_left <= 0){
+			relay_time_left = 0;
+			RELAY_ON = 1;
+		}
+	  }
+  #endif
+
   for(n=0;n<UART_NUMBER;n++) {
     #if !defined(PROMINI)
       CURRENTPORT=n;
     #endif
 	uint8_t bytesTXBuff = SerialUsedTXBuff(CURRENTPORT); // indicates the number of occupied bytes in TX buffer
-    if (bytesTXBuff > TX_BUFFER_SIZE/2 ) continue; // ensure there is enough free TX buffer to go further
+	if (bytesTXBuff > TX_BUFFER_SIZE/2 ){
+		continue; // ensure there is enough free TX buffer to go further
+	} 
     #define GPS_COND
     #if defined(GPS_SERIAL)
       #if defined(GPS_PROMINI)
@@ -240,9 +338,9 @@ void serialCom() {
     uint8_t cc = SerialAvailable(CURRENTPORT);
 
 	#ifdef BLUETOOTH_WT41
-		if(bt_state < CONNECTED && cc==0){
+		/*if(bt_state < CONNECTED && CURRENTPORT==BT_SERIAL_PORT && cc==0){
 			send_BT_string();
-		}
+		}*/
 	#endif
 
     while (cc-- GPS_COND RX_COND) {
@@ -285,7 +383,21 @@ void serialCom() {
           cc = 0; // no more than one MSP per port and per cycle
         }
 
-		if(c_state[CURRENTPORT]<=HEADER_START) evaluateOtherData(c); // evaluate all other incoming serial data
+		if(c_state[CURRENTPORT]<=HEADER_START){
+			evaluateOtherData(c); // evaluate all other incoming serial data
+		}else{
+			//Empty bluetooth buffer
+			#ifdef BLUETOOTH_WT41
+				//Clear the buffer
+				if(CURRENTPORT==BT_SERIAL_PORT) BT_BUFF_index = 0;
+			#endif
+		}
+		//Check if the relay can be turned on.
+		/*if(bt_state < CONNECTED){
+			RELAY_ON = 0;
+		}else{
+			RELAY_ON = 1;
+		}*/
 
       #endif // SUPPRESS_ALL_SERIAL_MSP
     }
@@ -678,117 +790,6 @@ void evaluateCommand() {
   tailSerialReply();
 }
 #endif // SUPPRESS_ALL_SERIAL_MSP
-
-// evaluate all other incoming serial data
-void evaluateOtherData(uint8_t sr) {
-  #ifndef SUPPRESS_OTHER_SERIAL_COMMANDS
-	#ifdef BLUETOOTH_WT41
-
-		//Relay the data
-		switch(CURRENTPORT){
-		case 0:
-			SerialSerialize(2,sr);
-			UartSendData(2);
-			break;
-		case 2:
-			SerialSerialize(0,sr);
-			UartSendData(0);
-			break;
-		}
-
-		//Handle bluetooth module commands
-		if(CURRENTPORT == BT_SERIAL_PORT){
-			//Save received data to buffer
-			if(BT_BUFF_index < INBUF_SIZE-2){
-				BT_BUFF[BT_BUFF_index++] = sr;
-			}
-
-			//Analyse the data when a newline is received
-			if(sr == '\n'){
-				//Add an end caracter
-				BT_BUFF[BT_BUFF_index] = 0;
-
-				switch (bt_state){
-					case UNKNOWN:
-						if(strcmp("OK",(const char *) BT_BUFF)){
-							bt_state = AT_READY;
-						}
-						break;
-					case CALL_IN_PROGRESS:
-						if(strcmp("CONNECT ",(const char *) BT_BUFF) && strcmp("RFCOMM",(const char *) BT_BUFF)){ //Leave the space after connect because the bluetooth may respond: CONNECTION_FAILED
-							bt_state = CONNECTED;
-						}
-						break;
-					default:
-						if(strcmp("SYNTAX ERROR",(const char *) BT_BUFF)){
-							bt_state = UNKNOWN;
-						}
-						break;
-				}
-			}
-
-			//Clear the string
-			BT_BUFF_index = 0;
-		}
-	#endif
-
-    switch (sr) {
-    // Note: we may receive weird characters here which could trigger unwanted features during flight.
-    //       this could lead to a crash easily.
-    //       Please use if (!f.ARMED) where neccessary
-      #ifdef LCD_CONF
-        case 's':
-        case 'S':
-          if (!f.ARMED) configurationLoop();
-          break;
-      #endif
-      #ifdef LOG_PERMANENT_SHOW_AT_L
-        case 'L':
-          if (!f.ARMED) dumpPLog(1);
-          break;
-        #endif
-        #if defined(LCD_TELEMETRY) && defined(LCD_TEXTSTAR)
-        case 'A': // button A press
-          toggle_telemetry(1);
-          break;
-        case 'B': // button B press
-          toggle_telemetry(2);
-          break;
-        case 'C': // button C press
-          toggle_telemetry(3);
-          break;
-        case 'D': // button D press
-          toggle_telemetry(4);
-          break;
-        case 'a': // button A release
-        case 'b': // button B release
-        case 'c': // button C release
-        case 'd': // button D release
-          break;
-      #endif
-      #ifdef LCD_TELEMETRY
-        case '0':
-        case '1':
-        case '2':
-        case '3':
-        case '4':
-        case '5':
-        case '6':
-        case '7':
-        case '8':
-        case '9':
-      #ifndef SUPPRESS_TELEMETRY_PAGE_R
-        case 'R':
-      #endif
-      #if defined(DEBUG) || defined(DEBUG_FREE)
-        case 'F':
-      #endif
-          toggle_telemetry(sr);
-          break;
-      #endif // LCD_TELEMETRY
-    }
-  #endif // SUPPRESS_OTHER_SERIAL_COMMANDS
-}
 
 #ifdef DEBUGMSG
 void debugmsg_append_str(const char *str) {

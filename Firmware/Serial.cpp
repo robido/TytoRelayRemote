@@ -8,7 +8,7 @@ static volatile uint8_t serialHeadRX[UART_NUMBER],serialTailRX[UART_NUMBER];
 static uint8_t serialBufferRX[RX_BUFFER_SIZE][UART_NUMBER];
 static volatile uint8_t serialHeadTX[UART_NUMBER],serialTailTX[UART_NUMBER];
 static uint8_t serialBufferTX[TX_BUFFER_SIZE][UART_NUMBER];
-
+uint8_t volatile RELAY_ON = 1;
 
 // *******************************************************
 // For Teensy 2.0, these function emulate the API used for ProMicro
@@ -181,10 +181,11 @@ void store_uart_in_buf(uint8_t data, uint8_t portnum) {
   ISR(USART1_RX_vect)  { store_uart_in_buf(UDR1, 1); }
 #endif
 #if defined(MEGA)
-  ISR(USART0_RX_vect)  { store_uart_in_buf(UDR0, 0); }
-  ISR(USART1_RX_vect)  { store_uart_in_buf(UDR1, 1); }
-  ISR(USART2_RX_vect)  { store_uart_in_buf(UDR2, 2); }
-  ISR(USART3_RX_vect)  { store_uart_in_buf(UDR3, 3); }
+  //Modified to also relay any received data to all other ports. Gives priority to buffer if in use (avoid breaking messages into parts)
+  ISR(USART0_RX_vect)  { uint8_t c = UDR0; store_uart_in_buf(c, 0); if(RELAY_ON){if(SerialUsedTXBuff(1)==0) UDR1 = c; if(SerialUsedTXBuff(2)==0) UDR2 = c; if(SerialUsedTXBuff(3)==0) UDR3 = c;}}
+  ISR(USART1_RX_vect)  { uint8_t c = UDR1; store_uart_in_buf(c, 1); if(RELAY_ON){if(SerialUsedTXBuff(0)==0) UDR0 = c; if(SerialUsedTXBuff(2)==0) UDR2 = c; if(SerialUsedTXBuff(3)==0) UDR3 = c;}}
+  ISR(USART2_RX_vect)  { uint8_t c = UDR2; store_uart_in_buf(c, 2); if(RELAY_ON){if(SerialUsedTXBuff(0)==0) UDR0 = c; if(SerialUsedTXBuff(1)==0) UDR1 = c; if(SerialUsedTXBuff(3)==0) UDR3 = c;}}
+  ISR(USART3_RX_vect)  { uint8_t c = UDR3; store_uart_in_buf(c, 3); if(RELAY_ON){if(SerialUsedTXBuff(0)==0) UDR0 = c; if(SerialUsedTXBuff(1)==0) UDR1 = c; if(SerialUsedTXBuff(2)==0) UDR2 = c;}}
 #endif
 
 uint8_t SerialRead(uint8_t port) {

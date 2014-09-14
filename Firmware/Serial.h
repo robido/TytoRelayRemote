@@ -11,9 +11,11 @@
 #if defined(GPS_SERIAL)
   #define RX_BUFFER_SIZE 256 // 256 RX buffer is needed for GPS communication (64 or 128 was too short)
 #else
-  #define RX_BUFFER_SIZE 64
+  #define RX_BUFFER_SIZE 256 //Change counter datatype if higher than 256
 #endif
-#define TX_BUFFER_SIZE 128
+#define TX_BUFFER_SIZE 256
+
+extern volatile uint8_t RELAY_ON;
 
 void    SerialOpen(uint8_t port, uint32_t baud);
 uint8_t SerialRead(uint8_t port);
