@@ -20,6 +20,8 @@
 
 #define MSP_PRIVATE              1     //in+out message      to be used for a generic framework : MSP + function code (LIST/GET/SET) + data. no code yet
 
+#define MSP_VARIABLE_ADJ		 50    //out message		 Variable potentiometers
+
 #define MSP_IDENT                100   //out message         multitype + multiwii version + protocol version + capability variable
 #define MSP_STATUS               101   //out message         cycletime & errors_count & sensor present & box activation & current setting number
 #define MSP_RAW_IMU              102   //out message         9 DOF
@@ -773,6 +775,9 @@ void evaluateCommand() {
    case MSP_DEBUG:
      s_struct((uint8_t*)&debug,8);
      break;
+   case MSP_VARIABLE_ADJ:
+	 s_struct((uint8_t*)&potentiometers,12);
+	 break;
    #ifdef DEBUGMSG
    case MSP_DEBUGMSG:
      {

@@ -57,6 +57,7 @@ extern plog_t plog;
 #endif
 
 extern int16_t debug[4];
+extern uint16_t potentiometers[6];
 
 extern conf_t conf;
 

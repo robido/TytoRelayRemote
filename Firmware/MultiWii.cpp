@@ -177,7 +177,8 @@ att_t att;
   uint32_t  ArmedTimeWarningMicroSeconds = 0;
 #endif
 
-int16_t  debug[4];
+int16_t  debug[4] = {0,0,0,0};
+uint16_t  potentiometers[6] = {0,0,0,0,0,0};
 
 flags_struct_t f;
 
@@ -380,6 +381,14 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
       rcCommand[PITCH] = rcCommand_PITCH;
     }
   #endif
+
+  //Variable resistors
+  int var_i;
+  debug[0]=111;
+  debug[1]=analogRead(A0);
+  for(var_i=0;var_i<6;var_i++){
+	potentiometers[var_i]=analogRead(potPINS[var_i]);
+  }
 
   // query at most one multiplexed analog channel per MWii cycle
   static uint8_t analogReader =0;

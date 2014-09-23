@@ -581,8 +581,9 @@
   #define AUX2PIN                    5  //PIN 67 =  PIN A13
   #define AUX3PIN                    6  //PIN 68 =  PIN A14
   #define AUX4PIN                    7  //PIN 69 =  PIN A15
-  #define V_BATPIN                   A0    // Analog PIN 0
-  #define PSENSORPIN                 A2    // Analog PIN 2
+  //#define V_BATPIN                   A0    // Analog PIN 0
+  //#define PSENSORPIN                 A2    // Analog PIN 2
+  const int potPINS[6] = {A0, A1, A2, A3, A4, A5};
   #define PCINT_PIN_COUNT            8
   #define PCINT_RX_BITS              (1<<2),(1<<4),(1<<5),(1<<6),(1<<7),(1<<0),(1<<1),(1<<3)
   #define PCINT_RX_PORT              PORTK
