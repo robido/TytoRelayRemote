@@ -84,6 +84,8 @@ static uint8_t inBuf[INBUF_SIZE][UART_NUMBER];
 static uint8_t checksum[UART_NUMBER];
 static uint8_t indRX[UART_NUMBER];
 static uint8_t cmdMSP[UART_NUMBER];
+static uint8_t dataSize[UART_NUMBER];
+static char target[UART_NUMBER];
 #ifdef BLUETOOTH_WT41
 	static uint8_t BT_BUFF[INBUF_SIZE];
 	static uint16_t BT_BUFF_index = 0;
@@ -109,7 +111,7 @@ void relay_off(uint8_t seconds){
 	relay_time_left = (uint32_t)seconds * 1000000L; //In microseconds
 }
 void relay_on(void){
-	RELAY_ON = 1;
+	//RELAY_ON = 1;
 	relay_time_left = 0;
 }
 #endif
@@ -266,7 +268,7 @@ void serialize32(uint32_t a) {
 
 void headSerialResponse(uint8_t err, uint8_t s) {
   serialize8('$');
-  serialize8('R');
+  serialize8(target[CURRENTPORT]);
   serialize8(err ? '!' : '>');
   checksum[CURRENTPORT] = 0; // start calculating a new checksum
   serialize8(s);
@@ -295,7 +297,6 @@ void serializeNames(PGM_P s) {
 void serialCom() {
   uint8_t c,n;  
   static uint8_t offset[UART_NUMBER];
-  static uint8_t dataSize[UART_NUMBER];
   static enum _serial_state {
     IDLE,
     HEADER_START,
@@ -356,9 +357,10 @@ void serialCom() {
         if (c_state[CURRENTPORT] == IDLE) {
           c_state[CURRENTPORT] = (c=='$') ? HEADER_START : IDLE;
         } else if (c_state[CURRENTPORT] == HEADER_START) {
-          c_state[CURRENTPORT] = (c=='R') ? HEADER_M : IDLE;
+          c_state[CURRENTPORT] = (c=='R' || c=='M') ? HEADER_M : IDLE;
+		  target[CURRENTPORT] = c;
         } else if (c_state[CURRENTPORT] == HEADER_M) {
-          c_state[CURRENTPORT] = (c=='<') ? HEADER_ARROW : IDLE;
+          c_state[CURRENTPORT] = (c=='<' || (c=='>' && target[CURRENTPORT]=='M')) ? HEADER_ARROW : IDLE;
         } else if (c_state[CURRENTPORT] == HEADER_ARROW) {
           if (c > INBUF_SIZE) {  // now we are expecting the payload size
             c_state[CURRENTPORT] = IDLE;
@@ -416,11 +418,9 @@ void s_struct_w(uint8_t *cb,uint8_t siz) {
   while(siz--) *cb++ = read8();
 }
 
-#ifndef SUPPRESS_ALL_SERIAL_MSP
-void evaluateCommand() {
-  uint32_t tmp=0; 
-
-  switch(cmdMSP[CURRENTPORT]) {
+void process_R(void){
+uint32_t tmp=0; 
+switch(cmdMSP[CURRENTPORT]) {
    case MSP_PRIVATE:
      headSerialError(0); // we don't have any custom msp currently, so tell the gui we do not use that
      break;
@@ -791,6 +791,25 @@ void evaluateCommand() {
    default:  // we do not know how to handle the (valid) message, indicate error MSP $M!
      headSerialError(0);
      break;
+  }
+  
+}
+
+#ifndef SUPPRESS_ALL_SERIAL_MSP
+void evaluateCommand() {
+  if(target[CURRENTPORT] == 'M'){
+	//Relay the command to Heli
+	uint8_t siz = dataSize[CURRENTPORT];
+	headSerialReply(siz);
+	int i;
+	for(i=0;i<siz;i++){
+		serialize8(inBuf[i][CURRENTPORT]);
+	}
+  }else{
+	if(target[CURRENTPORT] == 'R'){
+		//Locally process the command
+		process_R();
+	}
   }
   tailSerialReply();
 }
