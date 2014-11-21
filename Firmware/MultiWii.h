@@ -30,6 +30,8 @@ extern const char pidnames[];
 extern const char boxnames[];
 extern const uint8_t boxids[];
 
+extern Test_Jig_Data_t Test_Jig_Data;
+
 extern uint32_t currentTime;
 extern uint16_t previousTime;
 extern uint16_t cycleTime;

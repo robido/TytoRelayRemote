@@ -145,6 +145,7 @@ const uint8_t boxids[] PROGMEM = {// permanent IDs associated to boxes. This way
   #endif
 };
 
+Test_Jig_Data_t Test_Jig_Data;
 
 uint32_t currentTime = 0;
 uint16_t previousTime = 0;
@@ -383,12 +384,20 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
   #endif
 
   //Variable resistors
+#define LPF_analog 0.05
   int var_i;
-  debug[0]=111;
-  debug[1]=analogRead(A0);
+  static double vars[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
   for(var_i=0;var_i<6;var_i++){
-	potentiometers[var_i]=analogRead(potPINS[var_i]);
+	vars[var_i]=LPF_analog*analogRead(potPINS[var_i])+(1.0-LPF_analog)*vars[var_i];
+	potentiometers[var_i]=round(vars[var_i]);
   }
+
+  //Scales
+  static double force,trust;
+  force = LPF_analog*analogRead(6)+(1.0-LPF_analog)*force;
+  trust = LPF_analog*analogRead(7)+(1.0-LPF_analog)*trust;
+  Test_Jig_Data.Force_sensor = round(force);
+  Test_Jig_Data.Trust_scale = round(trust);
 
   // query at most one multiplexed analog channel per MWii cycle
   static uint8_t analogReader =0;

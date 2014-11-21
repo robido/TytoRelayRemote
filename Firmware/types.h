@@ -91,6 +91,11 @@ typedef struct {
 } imu_t;
 
 typedef struct {
+  int16_t Force_sensor;            
+  int16_t Trust_scale;
+} Test_Jig_Data_t;
+
+typedef struct {
   uint8_t  vbat;               // battery voltage in 0.1V steps
   uint16_t intPowerMeterSum;
   uint16_t rssi;              // range: [0;1023]
