@@ -442,7 +442,7 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
         vvec[ind++] = v;
         ind %= VBAT_SMOOTH;
         #if VBAT_SMOOTH == 16
-          analog.vbat = vsum / conf.vbatscale; // result is Vbatt in 0.1V steps
+          analog.vbat = vsum / conf.vbatscale / 16; // result is Vbatt in 0.1V steps
         #elif VBAT_SMOOTH < 16
           analog.vbat = (vsum * (16/VBAT_SMOOTH)) / conf.vbatscale; // result is Vbatt in 0.1V steps
         #else

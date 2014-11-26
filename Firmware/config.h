@@ -359,11 +359,12 @@
   /**************************************************************************************/
 
 	//BLUETOOTH MODULE
-	#define BLUETOOTH_WT41 //Special code to handle WT41 to connect to a slave bluetooth
+	//#define BLUETOOTH_WT41 //Special code to handle WT41 to connect to a slave bluetooth
 	#ifdef BLUETOOTH_WT41
 		//Obtained using a serial terminal connected directly to the module. Using iWrap 5.0 User Guide.
-		#define BT_REMOTE_ADDRESS "00:07:80:7d:52:1b" //Proto3 WT41 longe range module
+		//#define BT_REMOTE_ADDRESS "00:07:80:7d:52:1b" //Proto3 WT41 longe range module
 		//#define BT_REMOTE_ADDRESS "00:07:80:89:44:08" //Coaxial Proto1
+		#define BT_REMOTE_ADDRESS "00:14:03:06:01:58" //HB02 installed on trust jig
 		#define BT_SERIAL_PORT 2 //What serial port it is connected to
 	#endif
 
@@ -481,7 +482,7 @@
 
   /* only enable any of this if you must change the default pin assignment, e.g. your board does not have a specific pin */
   /* you may need to change PINx and PORTx plus #shift according to the desired pin! */
-  //#define OVERRIDE_V_BATPIN                   A0 // instead of A3    // Analog PIN 3
+  #define OVERRIDE_V_BATPIN                     A9 // instead of A3    // Analog PIN 3
 
   //#define OVERRIDE_PSENSORPIN                 A1 // instead of A2    // Analog PIN 2
 
@@ -850,12 +851,12 @@
     /* for V BAT monitoring
        after the resistor divisor we should get [0V;5V]->[0;1023] on analog V_BATPIN
        with R1=33k and R2=51k
-       vbat = [0;1023]*16/VBATSCALE
+       vbat = [0;1023]/VBATSCALE
        must be associated with #define BUZZER ! */
 
 //We use 2S lipo battery. FULL is 8.4V, Nominal is 7.4V, Empty is 6.4V.
-    //#define VBAT              // uncomment this line to activate the vbat code
-    #define VBATSCALE       203 // (*) (**) change this value if readed Battery voltage is different than real voltage
+    #define VBAT              // uncomment this line to activate the vbat code
+    #define VBATSCALE       102 // (*) (**) change this value if readed Battery voltage is different than real voltage
     #define VBATNOMINAL     74 // 7,4V full battery nominal voltage - only used for lcd.telemetry
     #define VBATLEVEL_WARN1 70 // (*) (**) 10,7V
     #define VBATLEVEL_WARN2  68 // (*) (**) 9.9V
