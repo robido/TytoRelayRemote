@@ -384,7 +384,7 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
   #endif
 
   //Variable resistors
-#define LPF_analog 0.05
+#define LPF_analog 0.03
   int var_i;
   static double vars[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
   for(var_i=0;var_i<6;var_i++){
