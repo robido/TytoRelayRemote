@@ -86,6 +86,10 @@ static uint8_t inBuf[INBUF_SIZE][UART_NUMBER];
 static uint8_t checksum[UART_NUMBER];
 static uint8_t indRX[UART_NUMBER];
 static uint8_t cmdMSP[UART_NUMBER];
+static uint8_t dataSize[UART_NUMBER];
+static uint8_t isM[UART_NUMBER];
+static uint8_t isRightArrow[UART_NUMBER];
+
 #ifdef BLUETOOTH_WT41
 	static uint8_t BT_BUFF[INBUF_SIZE];
 	static uint16_t BT_BUFF_index = 0;
@@ -297,7 +301,6 @@ void serializeNames(PGM_P s) {
 void serialCom() {
   uint8_t c,n;  
   static uint8_t offset[UART_NUMBER];
-  static uint8_t dataSize[UART_NUMBER];
   static enum _serial_state {
     IDLE,
     HEADER_START,
@@ -358,9 +361,11 @@ void serialCom() {
         if (c_state[CURRENTPORT] == IDLE) {
           c_state[CURRENTPORT] = (c=='$') ? HEADER_START : IDLE;
         } else if (c_state[CURRENTPORT] == HEADER_START) {
-          c_state[CURRENTPORT] = (c=='R') ? HEADER_M : IDLE;
+          c_state[CURRENTPORT] = ((c=='R') || (c=='M')) ? HEADER_M : IDLE;
+		  isM[CURRENTPORT] = (c=='M');
         } else if (c_state[CURRENTPORT] == HEADER_M) {
-          c_state[CURRENTPORT] = (c=='<') ? HEADER_ARROW : IDLE;
+          c_state[CURRENTPORT] = ((c=='<') || (c=='>')) ? HEADER_ARROW : IDLE;
+		  isRightArrow[CURRENTPORT] = (c=='>');
         } else if (c_state[CURRENTPORT] == HEADER_ARROW) {
           if (c > INBUF_SIZE) {  // now we are expecting the payload size
             c_state[CURRENTPORT] = IDLE;
@@ -421,383 +426,431 @@ void s_struct_w(uint8_t *cb,uint8_t siz) {
 #ifndef SUPPRESS_ALL_SERIAL_MSP
 void evaluateCommand() {
   uint32_t tmp=0; 
+  if(isM[CURRENTPORT]){
+	  //Multiwii command, forward it as is.
+	  uint8_t original_port = CURRENTPORT;
+	  uint8_t index;
+	  uint8_t port;
+	  uint8_t inchar;
 
-  switch(cmdMSP[CURRENTPORT]) {
-   case MSP_PRIVATE:
-     headSerialError(0); // we don't have any custom msp currently, so tell the gui we do not use that
-     break;
-   case MSP_SET_RAW_RC:
-     s_struct_w((uint8_t*)&rcSerial,16);
-     rcSerialCount = 50; // 1s transition 
-     break;
-   #if GPS && !defined(I2C_GPS)
-   case MSP_SET_RAW_GPS:
-     struct {
-       uint8_t a,b;
-       int32_t c,d;
-       int16_t e;
-       uint16_t f;
-     } set_set_raw_gps;
-     s_struct_w((uint8_t*)&set_set_raw_gps,14);
-     f.GPS_FIX = set_set_raw_gps.a;
-     GPS_numSat = set_set_raw_gps.b;
-     GPS_coord[LAT] = set_set_raw_gps.c;
-     GPS_coord[LON] = set_set_raw_gps.d;
-     GPS_altitude = set_set_raw_gps.e;
-     GPS_speed = set_set_raw_gps.f;
-     GPS_update |= 2;              // New data signalisation to GPS functions
-     break;
-   #endif
-   case MSP_SET_PID:
-     s_struct_w((uint8_t*)&conf.pid[0].P8,3*PIDITEMS);
-     break;
-   case MSP_SET_BOX:
-     s_struct_w((uint8_t*)&conf.activate[0],CHECKBOXITEMS*2);
-     break;
-   case MSP_SET_RC_TUNING:
-     s_struct_w((uint8_t*)&conf.rcRate8,7);
-     break;
-   #if !defined(DISABLE_SETTINGS_TAB)
-   case MSP_SET_MISC:
-     struct {
-       uint16_t a,b,c,d,e,f;
-       uint32_t g;
-       uint16_t h;
-       uint8_t  i,j,k,l;
-     } set_misc;
-     s_struct_w((uint8_t*)&set_misc,22);
-     #if defined(POWERMETER)
-       conf.powerTrigger1 = set_misc.a / PLEVELSCALE;
-     #endif
-     conf.minthrottle = set_misc.b;
-     #ifdef FAILSAFE 
-       conf.failsafe_throttle = set_misc.e;
-     #endif  
-     #if MAG
-       conf.mag_declination = set_misc.h;
-     #endif
-     #if defined(VBAT)
-       conf.vbatscale        = set_misc.i;
-       conf.vbatlevel_warn1  = set_misc.j;
-       conf.vbatlevel_warn2  = set_misc.k;
-       conf.vbatlevel_crit   = set_misc.l;
-     #endif
-     break;
-   case MSP_MISC:
-     struct {
-       uint16_t a,b,c,d,e,f;
-       uint32_t g;
-       uint16_t h;
-       uint8_t  i,j,k,l;
-     } misc;
-     misc.a = intPowerTrigger1;
-     misc.b = conf.minthrottle;
-     misc.c = MAXTHROTTLE;
-     misc.d = MINCOMMAND;
-     #ifdef FAILSAFE 
-       misc.e = conf.failsafe_throttle;
-     #else  
-       misc.e = 0;
-     #endif
-     #ifdef LOG_PERMANENT
-       misc.f = plog.arm;
-       misc.g = plog.lifetime + (plog.armed_time / 1000000); // <- computation must be moved outside from serial
-     #else
-       misc.f = 0; misc.g =0;
-     #endif
-     #if MAG
-       misc.h = conf.mag_declination;
-     #else
-       misc.h = 0;
-     #endif
-     #ifdef VBAT
-       misc.i = conf.vbatscale;
-       misc.j = conf.vbatlevel_warn1;
-       misc.k = conf.vbatlevel_warn2;
-       misc.l = conf.vbatlevel_crit;
-     #else
-       misc.i = 0;misc.j = 0;misc.k = 0;misc.l = 0;
-     #endif
-     s_struct((uint8_t*)&misc,22);
-     break;
-   #endif
-   #if defined (DYNBALANCE)
-     case MSP_SET_MOTOR:
-       s_struct_w((uint8_t*)&motor,16);
-     break;
-   #endif
-   #ifdef MULTIPLE_CONFIGURATION_PROFILES
-   case MSP_SELECT_SETTING:
-     if(!f.ARMED) {
-       global_conf.currentSet = read8();
-       if(global_conf.currentSet>2) global_conf.currentSet = 0;
-       writeGlobalSet(0);
-       readEEPROM();
-     }
-     headSerialReply(0);
-     break;
-   #endif
-   case MSP_SET_HEAD:
-     s_struct_w((uint8_t*)&magHold,2);
-     break;
-   case MSP_IDENT:
-     struct {
-       uint8_t v,t,msp_v;
-       uint32_t cap;
-     } id;
-     id.v     = VERSION;
-     id.t     = MULTITYPE;
-     id.msp_v = MSP_VERSION;
-     id.cap   = capability|DYNBAL<<2|FLAP<<3;
-     s_struct((uint8_t*)&id,7);
-     break;
-   case MSP_TEST_JIG_DATA:
-     s_struct((uint8_t*)&Test_Jig_Data,sizeof(Test_Jig_Data));
-     break;
-   case MSP_STATUS:
-     struct {
-       uint16_t cycleTime,i2c_errors_count,sensor;
-       uint32_t flag;
-       uint8_t set;
-     } st;
-     st.cycleTime        = cycleTime;
-     st.i2c_errors_count = i2c_errors_count;
-     st.sensor           = ACC|BARO<<1|MAG<<2|GPS<<3|SONAR<<4;
-     #if ACC
-       if(f.ANGLE_MODE)   tmp |= 1<<BOXANGLE;
-       if(f.HORIZON_MODE) tmp |= 1<<BOXHORIZON;
-     #endif
-     #if BARO && (!defined(SUPPRESS_BARO_ALTHOLD))
-       if(f.BARO_MODE) tmp |= 1<<BOXBARO;
-     #endif
-     if(f.MAG_MODE) tmp |= 1<<BOXMAG;
-     #if !defined(FIXEDWING)
-       #if defined(HEADFREE)
-         if(f.HEADFREE_MODE)       tmp |= 1<<BOXHEADFREE;
-         if(rcOptions[BOXHEADADJ]) tmp |= 1<<BOXHEADADJ;
-       #endif
-     #endif
-     #if defined(SERVO_TILT) || defined(GIMBAL)|| defined(SERVO_MIX_TILT)
-       if(rcOptions[BOXCAMSTAB]) tmp |= 1<<BOXCAMSTAB;
-     #endif
-     #if defined(CAMTRIG)
-       if(rcOptions[BOXCAMTRIG]) tmp |= 1<<BOXCAMTRIG;
-     #endif
-     #if GPS
-       if(f.GPS_HOME_MODE) tmp |= 1<<BOXGPSHOME; 
-       if(f.GPS_HOLD_MODE) tmp |= 1<<BOXGPSHOLD;
-     #endif
-     #if defined(FIXEDWING) || defined(HELICOPTER)
-       if(f.PASSTHRU_MODE) tmp |= 1<<BOXPASSTHRU;
-     #endif
-     #if defined(BUZZER)
-       if(rcOptions[BOXBEEPERON]) tmp |= 1<<BOXBEEPERON;
-     #endif
-     #if defined(LED_FLASHER)
-       if(rcOptions[BOXLEDMAX]) tmp |= 1<<BOXLEDMAX;
-       if(rcOptions[BOXLEDLOW]) tmp |= 1<<BOXLEDLOW;
-     #endif
-     #if defined(LANDING_LIGHTS_DDR)
-       if(rcOptions[BOXLLIGHTS]) tmp |= 1<<BOXLLIGHTS;
-     #endif
-     #if defined(VARIOMETER)
-       if(rcOptions[BOXVARIO]) tmp |= 1<<BOXVARIO;
-     #endif
-     #if defined(INFLIGHT_ACC_CALIBRATION)
-       if(rcOptions[BOXCALIB]) tmp |= 1<<BOXCALIB;
-     #endif
-     #if defined(GOVERNOR_P)
-       if(rcOptions[BOXGOV]) tmp |= 1<<BOXGOV;
-     #endif
-     #if defined(OSD_SWITCH)
-       if(rcOptions[BOXOSD]) tmp |= 1<<BOXOSD;
-     #endif
-     if(f.ARMED) tmp |= 1<<BOXARM;
-     st.flag             = tmp;
-     st.set              = global_conf.currentSet;
-     s_struct((uint8_t*)&st,11);
-     break;
-   case MSP_RAW_IMU:
-     #if defined(DYNBALANCE)
-       for(uint8_t axis=0;axis<3;axis++) {imu.gyroData[axis]=imu.gyroADC[axis];imu.accSmooth[axis]= imu.accADC[axis];} // Send the unfiltered Gyro & Acc values to gui.
-     #endif 
-     s_struct((uint8_t*)&imu,18);
-     break;
-   case MSP_SERVO:
-     s_struct((uint8_t*)&servo,16);
-     break;
-   case MSP_SERVO_CONF:
-     s_struct((uint8_t*)&conf.servoConf[0].min,56); // struct servo_conf_ is 7 bytes length: min:2 / max:2 / middle:2 / rate:1    ----     8 servo =>  8x7 = 56
-     break;
-   case MSP_SET_SERVO_CONF:
-     s_struct_w((uint8_t*)&conf.servoConf[0].min,56);
-     break;
-   case MSP_MOTOR:
-     s_struct((uint8_t*)&motor,16);
-     break;
-   case MSP_ACC_TRIM:
-     s_struct((uint8_t*)&conf.angleTrim[0],4);
-     break;
-   case MSP_SET_ACC_TRIM:
-     s_struct_w((uint8_t*)&conf.angleTrim[0],4);
-     break;
-   case MSP_RC:
-     s_struct((uint8_t*)&rcData,RC_CHANS*2);
-     break;
-   #if GPS
-   case MSP_RAW_GPS:
-     struct {
-       uint8_t a,b;
-       int32_t c,d;
-       int16_t e;
-       uint16_t f,g;
-     } msp_raw_gps;
-     msp_raw_gps.a     = f.GPS_FIX;
-     msp_raw_gps.b     = GPS_numSat;
-     msp_raw_gps.c     = GPS_coord[LAT];
-     msp_raw_gps.d     = GPS_coord[LON];
-     msp_raw_gps.e     = GPS_altitude;
-     msp_raw_gps.f     = GPS_speed;
-     msp_raw_gps.g     = GPS_ground_course;
-     s_struct((uint8_t*)&msp_raw_gps,16);
-     break;
-   case MSP_COMP_GPS:
-     struct {
-       uint16_t a;
-       int16_t b;
-       uint8_t c;
-     } msp_comp_gps;
-     msp_comp_gps.a     = GPS_distanceToHome;
-     msp_comp_gps.b     = GPS_directionToHome;
-     msp_comp_gps.c     = GPS_update & 1;
-     s_struct((uint8_t*)&msp_comp_gps,5);
-     break;
-   #endif
-   case MSP_ATTITUDE:
-     s_struct((uint8_t*)&att,6);
-     break;
-   case MSP_ALTITUDE:
-     s_struct((uint8_t*)&alt,6);
-     break;
-   case MSP_ANALOG:
-     s_struct((uint8_t*)&analog,7);
-     break;
-   case MSP_RC_TUNING:
-     s_struct((uint8_t*)&conf.rcRate8,7);
-     break;
-   case MSP_PID:
-     s_struct((uint8_t*)&conf.pid[0].P8,3*PIDITEMS);
-     break;
-   case MSP_PIDNAMES:
-     serializeNames(pidnames);
-     break;
-   case MSP_BOX:
-     s_struct((uint8_t*)&conf.activate[0],2*CHECKBOXITEMS);
-     break;
-   case MSP_BOXNAMES:
-     serializeNames(boxnames);
-     break;
-   case MSP_BOXIDS:
-     headSerialReply(CHECKBOXITEMS);
-     for(uint8_t i=0;i<CHECKBOXITEMS;i++) {
-       serialize8(pgm_read_byte(&(boxids[i])));
-     }
-     break;
-   case MSP_MOTOR_PINS:
-     s_struct((uint8_t*)&PWM_PIN,8);
-     break;
-   #if defined(USE_MSP_WP)    
-   case MSP_WP:
-     {
-       int32_t lat = 0,lon = 0;
-       uint8_t wp_no = read8();        //get the wp number  
-       headSerialReply(18);
-       if (wp_no == 0) {
-         lat = GPS_home[LAT];
-         lon = GPS_home[LON];
-       } else if (wp_no == 16) {
-         lat = GPS_hold[LAT];
-         lon = GPS_hold[LON];
-       }
-       serialize8(wp_no);
-       serialize32(lat);
-       serialize32(lon);
-       serialize32(AltHold);           //altitude (cm) will come here -- temporary implementation to test feature with apps
-       serialize16(0);                 //heading  will come here (deg)
-       serialize16(0);                 //time to stay (ms) will come here 
-       serialize8(0);                  //nav flag will come here
-     }
-     break;
-   case MSP_SET_WP:
-     {
-       int32_t lat = 0,lon = 0,alt = 0;
-       uint8_t wp_no = read8();        //get the wp number
-       lat = read32();
-       lon = read32();
-       alt = read32();                 // to set altitude (cm)
-       read16();                       // future: to set heading (deg)
-       read16();                       // future: to set time to stay (ms)
-       read8();                        // future: to set nav flag
-       if (wp_no == 0) {
-         GPS_home[LAT] = lat;
-         GPS_home[LON] = lon;
-         f.GPS_HOME_MODE = 0;          // with this flag, GPS_set_next_wp will be called in the next loop
-         f.GPS_FIX_HOME  = 1;
-         if (alt != 0) AltHold = alt;  // temporary implementation to test feature with apps
-       } else if (wp_no == 16) {
-         GPS_hold[LAT] = lat;
-         GPS_hold[LON] = lon;
-         if (alt != 0) AltHold = alt;  // temporary implementation to test feature with apps
-         nav_mode      = NAV_MODE_WP;
-         GPS_set_next_wp(&GPS_hold[LAT],&GPS_hold[LON]);
-       }
-     }
-     headSerialReply(0);
-     break;
-   #endif
-   case MSP_RESET_CONF:
-     if(!f.ARMED) LoadDefaults();
-     headSerialReply(0);
-     break;
-   case MSP_ACC_CALIBRATION:
-     if(!f.ARMED) calibratingA=512;
-     headSerialReply(0);
-     break;
-   case MSP_MAG_CALIBRATION:
-     if(!f.ARMED) f.CALIBRATE_MAG = 1;
-     headSerialReply(0);
-     break;
-   #if defined(SPEK_BIND)
-   case MSP_BIND:
-     spekBind();  
-     headSerialReply(0);
-     break;
-   #endif
-   case MSP_EEPROM_WRITE:
-     writeParams(0);
-     headSerialReply(0);
-     break;
-   case MSP_DEBUG:
-     s_struct((uint8_t*)&debug,8);
-     break;
-   case MSP_VARIABLE_ADJ:
-	 s_struct((uint8_t*)&potentiometers,12);
-	 break;
-   #ifdef DEBUGMSG
-   case MSP_DEBUGMSG:
-     {
-       uint8_t size = debugmsg_available();
-       if (size > 16) size = 16;
-       headSerialReply(size);
-       debugmsg_serialize(size);
-     }
-     break;
-   #endif
-   default:  // we do not know how to handle the (valid) message, indicate error MSP $M!
-     headSerialError(0);
-     break;
-  }
-  tailSerialReply();
+	  //Head reply
+	  for(port=0;port<UART_NUMBER;port++){
+		  CURRENTPORT = port;
+		  if(port!=original_port){
+			  serialize8('$');
+			  serialize8('M');
+			  if(isRightArrow[original_port]){
+				serialize8('>');
+			  }else{
+				serialize8('<');
+			  }
+			  checksum[CURRENTPORT] = 0; // start calculating a new checksum
+			  serialize8(dataSize[original_port]);
+			  serialize8(cmdMSP[original_port]);
+		  }
+	  }
+	
+	  //Content if any
+	  for(index=0;index<dataSize[original_port];index++){
+		CURRENTPORT = original_port;
+		inchar = read8();
+		for(port=0;port<UART_NUMBER;port++){
+			CURRENTPORT = port;
+		    if(port!=original_port){
+			  serialize8(inchar);
+		    }
+		}
+	  }
+
+	  //Tail and send
+	  for(port=0;port<UART_NUMBER;port++){
+			CURRENTPORT = port;
+		    if(port!=original_port){
+			  tailSerialReply();
+		    }
+	  }
+
+	  //Restore current port
+	  CURRENTPORT = original_port;
+  }else{
+	  //Relay command, process it normally
+	  switch(cmdMSP[CURRENTPORT]) {
+	   case MSP_PRIVATE:
+		 headSerialError(0); // we don't have any custom msp currently, so tell the gui we do not use that
+		 break;
+	   case MSP_SET_RAW_RC:
+		 s_struct_w((uint8_t*)&rcSerial,16);
+		 rcSerialCount = 50; // 1s transition 
+		 break;
+	   #if GPS && !defined(I2C_GPS)
+	   case MSP_SET_RAW_GPS:
+		 struct {
+		   uint8_t a,b;
+		   int32_t c,d;
+		   int16_t e;
+		   uint16_t f;
+		 } set_set_raw_gps;
+		 s_struct_w((uint8_t*)&set_set_raw_gps,14);
+		 f.GPS_FIX = set_set_raw_gps.a;
+		 GPS_numSat = set_set_raw_gps.b;
+		 GPS_coord[LAT] = set_set_raw_gps.c;
+		 GPS_coord[LON] = set_set_raw_gps.d;
+		 GPS_altitude = set_set_raw_gps.e;
+		 GPS_speed = set_set_raw_gps.f;
+		 GPS_update |= 2;              // New data signalisation to GPS functions
+		 break;
+	   #endif
+	   case MSP_SET_PID:
+		 s_struct_w((uint8_t*)&conf.pid[0].P8,3*PIDITEMS);
+		 break;
+	   case MSP_SET_BOX:
+		 s_struct_w((uint8_t*)&conf.activate[0],CHECKBOXITEMS*2);
+		 break;
+	   case MSP_SET_RC_TUNING:
+		 s_struct_w((uint8_t*)&conf.rcRate8,7);
+		 break;
+	   #if !defined(DISABLE_SETTINGS_TAB)
+	   case MSP_SET_MISC:
+		 struct {
+		   uint16_t a,b,c,d,e,f;
+		   uint32_t g;
+		   uint16_t h;
+		   uint8_t  i,j,k,l;
+		 } set_misc;
+		 s_struct_w((uint8_t*)&set_misc,22);
+		 #if defined(POWERMETER)
+		   conf.powerTrigger1 = set_misc.a / PLEVELSCALE;
+		 #endif
+		 conf.minthrottle = set_misc.b;
+		 #ifdef FAILSAFE 
+		   conf.failsafe_throttle = set_misc.e;
+		 #endif  
+		 #if MAG
+		   conf.mag_declination = set_misc.h;
+		 #endif
+		 #if defined(VBAT)
+		   conf.vbatscale        = set_misc.i;
+		   conf.vbatlevel_warn1  = set_misc.j;
+		   conf.vbatlevel_warn2  = set_misc.k;
+		   conf.vbatlevel_crit   = set_misc.l;
+		 #endif
+		 break;
+	   case MSP_MISC:
+		 struct {
+		   uint16_t a,b,c,d,e,f;
+		   uint32_t g;
+		   uint16_t h;
+		   uint8_t  i,j,k,l;
+		 } misc;
+		 misc.a = intPowerTrigger1;
+		 misc.b = conf.minthrottle;
+		 misc.c = MAXTHROTTLE;
+		 misc.d = MINCOMMAND;
+		 #ifdef FAILSAFE 
+		   misc.e = conf.failsafe_throttle;
+		 #else  
+		   misc.e = 0;
+		 #endif
+		 #ifdef LOG_PERMANENT
+		   misc.f = plog.arm;
+		   misc.g = plog.lifetime + (plog.armed_time / 1000000); // <- computation must be moved outside from serial
+		 #else
+		   misc.f = 0; misc.g =0;
+		 #endif
+		 #if MAG
+		   misc.h = conf.mag_declination;
+		 #else
+		   misc.h = 0;
+		 #endif
+		 #ifdef VBAT
+		   misc.i = conf.vbatscale;
+		   misc.j = conf.vbatlevel_warn1;
+		   misc.k = conf.vbatlevel_warn2;
+		   misc.l = conf.vbatlevel_crit;
+		 #else
+		   misc.i = 0;misc.j = 0;misc.k = 0;misc.l = 0;
+		 #endif
+		 s_struct((uint8_t*)&misc,22);
+		 break;
+	   #endif
+	   #if defined (DYNBALANCE)
+		 case MSP_SET_MOTOR:
+		   s_struct_w((uint8_t*)&motor,16);
+		 break;
+	   #endif
+	   #ifdef MULTIPLE_CONFIGURATION_PROFILES
+	   case MSP_SELECT_SETTING:
+		 if(!f.ARMED) {
+		   global_conf.currentSet = read8();
+		   if(global_conf.currentSet>2) global_conf.currentSet = 0;
+		   writeGlobalSet(0);
+		   readEEPROM();
+		 }
+		 headSerialReply(0);
+		 break;
+	   #endif
+	   case MSP_SET_HEAD:
+		 s_struct_w((uint8_t*)&magHold,2);
+		 break;
+	   case MSP_IDENT:
+		 struct {
+		   uint8_t v,t,msp_v;
+		   uint32_t cap;
+		 } id;
+		 id.v     = VERSION;
+		 id.t     = MULTITYPE;
+		 id.msp_v = MSP_VERSION;
+		 id.cap   = capability|DYNBAL<<2|FLAP<<3;
+		 s_struct((uint8_t*)&id,7);
+		 break;
+	   case MSP_TEST_JIG_DATA:
+		 s_struct((uint8_t*)&Test_Jig_Data,sizeof(Test_Jig_Data));
+		 break;
+	   case MSP_STATUS:
+		 struct {
+		   uint16_t cycleTime,i2c_errors_count,sensor;
+		   uint32_t flag;
+		   uint8_t set;
+		 } st;
+		 st.cycleTime        = cycleTime;
+		 st.i2c_errors_count = i2c_errors_count;
+		 st.sensor           = ACC|BARO<<1|MAG<<2|GPS<<3|SONAR<<4;
+		 #if ACC
+		   if(f.ANGLE_MODE)   tmp |= 1<<BOXANGLE;
+		   if(f.HORIZON_MODE) tmp |= 1<<BOXHORIZON;
+		 #endif
+		 #if BARO && (!defined(SUPPRESS_BARO_ALTHOLD))
+		   if(f.BARO_MODE) tmp |= 1<<BOXBARO;
+		 #endif
+		 if(f.MAG_MODE) tmp |= 1<<BOXMAG;
+		 #if !defined(FIXEDWING)
+		   #if defined(HEADFREE)
+			 if(f.HEADFREE_MODE)       tmp |= 1<<BOXHEADFREE;
+			 if(rcOptions[BOXHEADADJ]) tmp |= 1<<BOXHEADADJ;
+		   #endif
+		 #endif
+		 #if defined(SERVO_TILT) || defined(GIMBAL)|| defined(SERVO_MIX_TILT)
+		   if(rcOptions[BOXCAMSTAB]) tmp |= 1<<BOXCAMSTAB;
+		 #endif
+		 #if defined(CAMTRIG)
+		   if(rcOptions[BOXCAMTRIG]) tmp |= 1<<BOXCAMTRIG;
+		 #endif
+		 #if GPS
+		   if(f.GPS_HOME_MODE) tmp |= 1<<BOXGPSHOME; 
+		   if(f.GPS_HOLD_MODE) tmp |= 1<<BOXGPSHOLD;
+		 #endif
+		 #if defined(FIXEDWING) || defined(HELICOPTER)
+		   if(f.PASSTHRU_MODE) tmp |= 1<<BOXPASSTHRU;
+		 #endif
+		 #if defined(BUZZER)
+		   if(rcOptions[BOXBEEPERON]) tmp |= 1<<BOXBEEPERON;
+		 #endif
+		 #if defined(LED_FLASHER)
+		   if(rcOptions[BOXLEDMAX]) tmp |= 1<<BOXLEDMAX;
+		   if(rcOptions[BOXLEDLOW]) tmp |= 1<<BOXLEDLOW;
+		 #endif
+		 #if defined(LANDING_LIGHTS_DDR)
+		   if(rcOptions[BOXLLIGHTS]) tmp |= 1<<BOXLLIGHTS;
+		 #endif
+		 #if defined(VARIOMETER)
+		   if(rcOptions[BOXVARIO]) tmp |= 1<<BOXVARIO;
+		 #endif
+		 #if defined(INFLIGHT_ACC_CALIBRATION)
+		   if(rcOptions[BOXCALIB]) tmp |= 1<<BOXCALIB;
+		 #endif
+		 #if defined(GOVERNOR_P)
+		   if(rcOptions[BOXGOV]) tmp |= 1<<BOXGOV;
+		 #endif
+		 #if defined(OSD_SWITCH)
+		   if(rcOptions[BOXOSD]) tmp |= 1<<BOXOSD;
+		 #endif
+		 if(f.ARMED) tmp |= 1<<BOXARM;
+		 st.flag             = tmp;
+		 st.set              = global_conf.currentSet;
+		 s_struct((uint8_t*)&st,11);
+		 break;
+	   case MSP_RAW_IMU:
+		 #if defined(DYNBALANCE)
+		   for(uint8_t axis=0;axis<3;axis++) {imu.gyroData[axis]=imu.gyroADC[axis];imu.accSmooth[axis]= imu.accADC[axis];} // Send the unfiltered Gyro & Acc values to gui.
+		 #endif 
+		 s_struct((uint8_t*)&imu,18);
+		 break;
+	   case MSP_SERVO:
+		 s_struct((uint8_t*)&servo,16);
+		 break;
+	   case MSP_SERVO_CONF:
+		 s_struct((uint8_t*)&conf.servoConf[0].min,56); // struct servo_conf_ is 7 bytes length: min:2 / max:2 / middle:2 / rate:1    ----     8 servo =>  8x7 = 56
+		 break;
+	   case MSP_SET_SERVO_CONF:
+		 s_struct_w((uint8_t*)&conf.servoConf[0].min,56);
+		 break;
+	   case MSP_MOTOR:
+		 s_struct((uint8_t*)&motor,16);
+		 break;
+	   case MSP_ACC_TRIM:
+		 s_struct((uint8_t*)&conf.angleTrim[0],4);
+		 break;
+	   case MSP_SET_ACC_TRIM:
+		 s_struct_w((uint8_t*)&conf.angleTrim[0],4);
+		 break;
+	   case MSP_RC:
+		 s_struct((uint8_t*)&rcData,RC_CHANS*2);
+		 break;
+	   #if GPS
+	   case MSP_RAW_GPS:
+		 struct {
+		   uint8_t a,b;
+		   int32_t c,d;
+		   int16_t e;
+		   uint16_t f,g;
+		 } msp_raw_gps;
+		 msp_raw_gps.a     = f.GPS_FIX;
+		 msp_raw_gps.b     = GPS_numSat;
+		 msp_raw_gps.c     = GPS_coord[LAT];
+		 msp_raw_gps.d     = GPS_coord[LON];
+		 msp_raw_gps.e     = GPS_altitude;
+		 msp_raw_gps.f     = GPS_speed;
+		 msp_raw_gps.g     = GPS_ground_course;
+		 s_struct((uint8_t*)&msp_raw_gps,16);
+		 break;
+	   case MSP_COMP_GPS:
+		 struct {
+		   uint16_t a;
+		   int16_t b;
+		   uint8_t c;
+		 } msp_comp_gps;
+		 msp_comp_gps.a     = GPS_distanceToHome;
+		 msp_comp_gps.b     = GPS_directionToHome;
+		 msp_comp_gps.c     = GPS_update & 1;
+		 s_struct((uint8_t*)&msp_comp_gps,5);
+		 break;
+	   #endif
+	   case MSP_ATTITUDE:
+		 s_struct((uint8_t*)&att,6);
+		 break;
+	   case MSP_ALTITUDE:
+		 s_struct((uint8_t*)&alt,6);
+		 break;
+	   case MSP_ANALOG:
+		 s_struct((uint8_t*)&analog,7);
+		 break;
+	   case MSP_RC_TUNING:
+		 s_struct((uint8_t*)&conf.rcRate8,7);
+		 break;
+	   case MSP_PID:
+		 s_struct((uint8_t*)&conf.pid[0].P8,3*PIDITEMS);
+		 break;
+	   case MSP_PIDNAMES:
+		 serializeNames(pidnames);
+		 break;
+	   case MSP_BOX:
+		 s_struct((uint8_t*)&conf.activate[0],2*CHECKBOXITEMS);
+		 break;
+	   case MSP_BOXNAMES:
+		 serializeNames(boxnames);
+		 break;
+	   case MSP_BOXIDS:
+		 headSerialReply(CHECKBOXITEMS);
+		 for(uint8_t i=0;i<CHECKBOXITEMS;i++) {
+		   serialize8(pgm_read_byte(&(boxids[i])));
+		 }
+		 break;
+	   case MSP_MOTOR_PINS:
+		 s_struct((uint8_t*)&PWM_PIN,8);
+		 break;
+	   #if defined(USE_MSP_WP)    
+	   case MSP_WP:
+		 {
+		   int32_t lat = 0,lon = 0;
+		   uint8_t wp_no = read8();        //get the wp number  
+		   headSerialReply(18);
+		   if (wp_no == 0) {
+			 lat = GPS_home[LAT];
+			 lon = GPS_home[LON];
+		   } else if (wp_no == 16) {
+			 lat = GPS_hold[LAT];
+			 lon = GPS_hold[LON];
+		   }
+		   serialize8(wp_no);
+		   serialize32(lat);
+		   serialize32(lon);
+		   serialize32(AltHold);           //altitude (cm) will come here -- temporary implementation to test feature with apps
+		   serialize16(0);                 //heading  will come here (deg)
+		   serialize16(0);                 //time to stay (ms) will come here 
+		   serialize8(0);                  //nav flag will come here
+		 }
+		 break;
+	   case MSP_SET_WP:
+		 {
+		   int32_t lat = 0,lon = 0,alt = 0;
+		   uint8_t wp_no = read8();        //get the wp number
+		   lat = read32();
+		   lon = read32();
+		   alt = read32();                 // to set altitude (cm)
+		   read16();                       // future: to set heading (deg)
+		   read16();                       // future: to set time to stay (ms)
+		   read8();                        // future: to set nav flag
+		   if (wp_no == 0) {
+			 GPS_home[LAT] = lat;
+			 GPS_home[LON] = lon;
+			 f.GPS_HOME_MODE = 0;          // with this flag, GPS_set_next_wp will be called in the next loop
+			 f.GPS_FIX_HOME  = 1;
+			 if (alt != 0) AltHold = alt;  // temporary implementation to test feature with apps
+		   } else if (wp_no == 16) {
+			 GPS_hold[LAT] = lat;
+			 GPS_hold[LON] = lon;
+			 if (alt != 0) AltHold = alt;  // temporary implementation to test feature with apps
+			 nav_mode      = NAV_MODE_WP;
+			 GPS_set_next_wp(&GPS_hold[LAT],&GPS_hold[LON]);
+		   }
+		 }
+		 headSerialReply(0);
+		 break;
+	   #endif
+	   case MSP_RESET_CONF:
+		 if(!f.ARMED) LoadDefaults();
+		 headSerialReply(0);
+		 break;
+	   case MSP_ACC_CALIBRATION:
+		 if(!f.ARMED) calibratingA=512;
+		 headSerialReply(0);
+		 break;
+	   case MSP_MAG_CALIBRATION:
+		 if(!f.ARMED) f.CALIBRATE_MAG = 1;
+		 headSerialReply(0);
+		 break;
+	   #if defined(SPEK_BIND)
+	   case MSP_BIND:
+		 spekBind();  
+		 headSerialReply(0);
+		 break;
+	   #endif
+	   case MSP_EEPROM_WRITE:
+		 writeParams(0);
+		 headSerialReply(0);
+		 break;
+	   case MSP_DEBUG:
+		 s_struct((uint8_t*)&debug,8);
+		 break;
+	   case MSP_VARIABLE_ADJ:
+		 s_struct((uint8_t*)&potentiometers,12);
+		 break;
+	   #ifdef DEBUGMSG
+	   case MSP_DEBUGMSG:
+		 {
+		   uint8_t size = debugmsg_available();
+		   if (size > 16) size = 16;
+		   headSerialReply(size);
+		   debugmsg_serialize(size);
+		 }
+		 break;
+	   #endif
+	   default:  // we do not know how to handle the (valid) message, indicate error MSP $M!
+		 headSerialError(0);
+		 break;
+	  }
+	  tailSerialReply();
+	}
 }
 #endif // SUPPRESS_ALL_SERIAL_MSP
 

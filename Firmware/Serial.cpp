@@ -8,7 +8,7 @@ static volatile uint8_t serialHeadRX[UART_NUMBER],serialTailRX[UART_NUMBER];
 static uint8_t serialBufferRX[RX_BUFFER_SIZE][UART_NUMBER];
 static volatile uint8_t serialHeadTX[UART_NUMBER],serialTailTX[UART_NUMBER];
 static uint8_t serialBufferTX[TX_BUFFER_SIZE][UART_NUMBER];
-uint8_t volatile RELAY_ON = 1;
+uint8_t volatile RELAY_ON = 0;
 
 // *******************************************************
 // For Teensy 2.0, these function emulate the API used for ProMicro
