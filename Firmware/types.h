@@ -93,6 +93,7 @@ typedef struct {
 typedef struct {
   int16_t Force_sensor;            
   int16_t Trust_scale;
+  int16_t Current;
 } Test_Jig_Data_t;
 
 typedef struct {

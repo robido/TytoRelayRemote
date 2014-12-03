@@ -392,12 +392,14 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
 	potentiometers[var_i]=round(vars[var_i]);
   }
 
-  //Scales
-  static double force,trust;
+  //Jig sensors
+  static double force,trust,current;
   force = LPF_analog*analogRead(6)+(1.0-LPF_analog)*force;
   trust = LPF_analog*analogRead(7)+(1.0-LPF_analog)*trust;
-  Test_Jig_Data.Force_sensor = round(force);
-  Test_Jig_Data.Trust_scale = round(trust);
+  current = LPF_analog*analogRead(8)+(1.0-LPF_analog)*current;
+  Test_Jig_Data.Force_sensor = round(10.0*force);
+  Test_Jig_Data.Trust_scale = round(10.0*(-0.2773562*trust+272.0864)); //0.1g resolution
+  Test_Jig_Data.Current = round((current-512.0)*(5.0/(1023.0*0.000185))); //in mA
 
   // query at most one multiplexed analog channel per MWii cycle
   static uint8_t analogReader =0;
