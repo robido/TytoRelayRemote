@@ -94,6 +94,9 @@ typedef struct {
   int16_t Force_sensor;            
   int16_t Trust_scale;
   int16_t Current;
+  int16_t Battery;
+  int16_t MainMotor_temp;
+  int16_t Room_temp;
 } Test_Jig_Data_t;
 
 typedef struct {

@@ -25,6 +25,7 @@ November  2013     V2.3
 #include "Serial.h"
 #include "GPS.h"
 #include "Protocol.h"
+#include "OneWire.h" //For the DS18S20 Temperature chip
 
 #include <avr/pgmspace.h>
 
@@ -160,6 +161,10 @@ int32_t  AltHold; // in cm
 int16_t  sonarAlt;
 int16_t  BaroPID = 0;
 int16_t  errorAltitudeI = 0;
+
+#ifdef MAIN_MOTOR_TEMP
+OneWire  ds(22);  // temp sensor on pin 22
+#endif
 
 // **************
 // gyro+acc IMU
@@ -334,6 +339,103 @@ conf_t conf;
   int32_t baroPressureSum;
 #endif
 
+  #ifdef MAIN_MOTOR_TEMP
+
+int16_t get_digital_temp(int sensor){
+  static int16_t last_valid_temp[2] = {0, 0};
+  static int current_sensor = 0;
+  static int8_t loop_state = 0;
+  static int32_t delay_wait_us = 0;
+  static int HighByte, LowByte, TReading, SignBit, Tc_100, Whole, Fract; //For interpreting hex to a temp
+  static byte i;
+  static byte present = 0;
+  static byte data[12];
+  static byte addr[8]; 
+  const byte adress_ambient[8] = {0x28,0xDF,0xAF,0xD3,0x05,0x00,0x00,0x1E};
+  static byte adress_motor[8] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}; //adress automatically determined
+
+  delay_wait_us-=cycleTime;
+  if(delay_wait_us<=0){
+	  delay_wait_us=0;
+	  switch(loop_state){
+	  case 0:
+		  if ( !ds.search(addr)) {
+			 ds.reset_search();
+			 delay_wait_us = 250000;
+		  }else{
+			loop_state++;
+		  }
+		  break;
+	  case 1:
+		  if ( OneWire::crc8( addr, 7) != addr[7]) {
+			loop_state = 0;
+		  }else{
+			loop_state++;
+		  }
+		  break;
+	  case 2:
+		  if ( addr[0] != 0x28) {
+			loop_state = 0;
+		  }else{
+			  current_sensor = 0; //Assume ambient sensor
+			  for ( i = 1; i < 8; i++) { //Check that we have the ambient sensor
+				  if(addr[i] != adress_ambient[i]) current_sensor = 1;
+			  }
+			  if(current_sensor == 1){
+				//Record the adress of the motor sensor
+				for ( i = 0; i < 8; i++) { //Check that we have the ambient sensor
+				  adress_motor[i] = addr[i];
+				}
+			  }
+			loop_state++;
+		  }
+		  break;
+	  case 3:
+		  ds.reset();
+		  if(current_sensor == 0){
+			  ds.select(adress_ambient);
+		  }else{
+			  ds.select(adress_motor);
+		  }
+          ds.write(0x44,0);         // start conversion, with parasite power off at the end
+          delay_wait_us = 1000000;     // maybe 750ms is enough, maybe not
+		  loop_state++;
+		  break;
+	  case 4:
+		  present = ds.reset();
+		  if(current_sensor == 0){
+			  ds.select(adress_ambient);
+		  }else{
+			  ds.select(adress_motor);
+		  }   
+		  ds.write(0xBE);         // Read Scratchpad
+		  for ( i = 0; i < 9; i++) {           // we need 9 bytes
+			data[i] = ds.read();
+		  }
+  
+		  //Convert HEX to deg C
+		  LowByte = data[0];
+		  HighByte = data[1];
+		  TReading = (HighByte << 8) + LowByte;
+		  int16_t temp = (6 * TReading) + TReading / 4;    // multiply by (100 * 0.0625) or 6.25
+		  if(temp <=12500 && temp >=-5500)
+			last_valid_temp[current_sensor] = temp;
+
+		  if(adress_motor[0]==0){ //Motor temp sensor not found yet
+			loop_state = 0;
+		  }else{
+			loop_state = 3;
+			current_sensor = 1 - current_sensor; //Select the other sensor
+		  }
+		  break;
+	  }
+  }
+  return last_valid_temp[sensor];
+return 0;
+}
+
+#endif
+
 void annexCode() { // this code is excetuted at each loop and won't interfere with control loop if it lasts less than 650 microseconds
   static uint32_t calibratedAccTime;
   uint16_t tmp,tmp2;
@@ -384,22 +486,28 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
   #endif
 
   //Variable resistors
-#define LPF_analog 0.03
+#define LPF_vars 0.03
   int var_i;
   static double vars[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
   for(var_i=0;var_i<6;var_i++){
-	vars[var_i]=LPF_analog*analogRead(potPINS[var_i])+(1.0-LPF_analog)*vars[var_i];
+	vars[var_i]=LPF_vars*analogRead(potPINS[var_i])+(1.0-LPF_vars)*vars[var_i];
 	potentiometers[var_i]=round(vars[var_i]);
   }
 
   //Jig sensors
+#define LPF_jig 0.01
   static double force,trust,current;
-  force = LPF_analog*analogRead(6)+(1.0-LPF_analog)*force;
-  trust = LPF_analog*analogRead(7)+(1.0-LPF_analog)*trust;
-  current = LPF_analog*analogRead(8)+(1.0-LPF_analog)*current;
+  force = LPF_jig*analogRead(6)+(1.0-LPF_jig)*force;
+  trust = LPF_jig*analogRead(7)+(1.0-LPF_jig)*trust;
+  current = LPF_jig*analogRead(8)+(1.0-LPF_jig)*current;
   Test_Jig_Data.Force_sensor = round(10.0*(1.272228871*force-1.526674645)); //0.1g resolution
-  Test_Jig_Data.Trust_scale = round(10.0*(-0.2773562*trust+272.0864)); //0.1g resolution
+  Test_Jig_Data.Trust_scale = round(10*(1023-trust-30)*(226.796/820)); //0.1g resolution, calibrated using 8oz weight
   Test_Jig_Data.Current = round((current-512.0)*(5.0/(1023.0*0.000185))); //in mA
+
+#ifdef MAIN_MOTOR_TEMP
+	Test_Jig_Data.MainMotor_temp = get_digital_temp(1);
+	Test_Jig_Data.Room_temp = get_digital_temp(0);
+#endif
 
   // query at most one multiplexed analog channel per MWii cycle
   static uint8_t analogReader =0;
@@ -445,8 +553,9 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
         ind %= VBAT_SMOOTH;
         #if VBAT_SMOOTH == 16
 		  //debug[1]=vsum;
-		  float vbat = (float)vsum*0.00612481;
+		  float vbat = (float)vsum*0.005856747;
           analog.vbat = round(vbat); // result is Vbatt in 0.1V steps
+		  Test_Jig_Data.Battery = round(10*vbat); // result is Vbatt in 0.01V steps
         #elif VBAT_SMOOTH < 16
           analog.vbat = (vsum * (16/VBAT_SMOOTH)) / conf.vbatscale; // result is Vbatt in 0.1V steps
         #else
