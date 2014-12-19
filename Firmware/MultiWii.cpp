@@ -552,8 +552,8 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
         vvec[ind++] = v;
         ind %= VBAT_SMOOTH;
         #if VBAT_SMOOTH == 16
-		  //debug[1]=vsum;
-		  float vbat = (float)vsum*0.005856747;
+		  debug[1]=vsum; //13150 for 14.68V
+		  float vbat = (float)vsum*0.01116349809886;
           analog.vbat = round(vbat); // result is Vbatt in 0.1V steps
 		  Test_Jig_Data.Battery = round(10*vbat); // result is Vbatt in 0.01V steps
         #elif VBAT_SMOOTH < 16
